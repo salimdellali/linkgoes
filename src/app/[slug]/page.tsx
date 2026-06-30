@@ -1,26 +1,22 @@
-import { NextRequest } from 'next/server'
+import { notFound, redirect } from 'next/navigation'
+import { headers } from 'next/headers'
 import { db } from '@/db'
 import { links, clicks } from '@/db/schema'
 import { eq } from 'drizzle-orm'
 import { PostHog } from 'posthog-node'
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ slug: string }> }
-) {
+export default async function SlugPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params
   const [link] = await db.select().from(links).where(eq(links.slug, slug))
 
-  if (!link) return Response.redirect(new URL('/not-found', request.url), 302)
+  if (!link) notFound()
+  if (link.expiresAt && link.expiresAt < new Date()) notFound()
 
-  if (link.expiresAt && link.expiresAt < new Date()) {
-    return Response.redirect(new URL('/not-found', request.url), 302)
-  }
-
-  const referrer = request.headers.get('referer') ?? undefined
-  const country = request.headers.get('x-vercel-ip-country') ?? undefined
-  const city = request.headers.get('x-vercel-ip-city') ?? undefined
-  const ua = request.headers.get('user-agent') ?? ''
+  const headersList = await headers()
+  const referrer = headersList.get('referer') ?? undefined
+  const country = headersList.get('x-vercel-ip-country') ?? undefined
+  const city = headersList.get('x-vercel-ip-city') ?? undefined
+  const ua = headersList.get('user-agent') ?? ''
   const device = /mobile/i.test(ua) ? 'mobile' : /tablet/i.test(ua) ? 'tablet' : 'desktop'
 
   await db.insert(clicks).values({ linkId: link.id, referrer, country, city, device })
@@ -32,6 +28,5 @@ export async function GET(
     await ph.shutdown()
   }
 
-  const statusCode = link.expiresAt ? 302 : 301
-  return Response.redirect(link.originalUrl, statusCode)
+  redirect(link.originalUrl)
 }
